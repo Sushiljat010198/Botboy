@@ -320,12 +320,12 @@ bot.action('delete', async (ctx) => {
   }
 });
 
-app.get('/', (req, res) => {
-  res.send('<h1>✅ Bot is running...</h1>');
-});
-
 app.listen(port, () => {
   console.log(`✅ Web server running on http://localhost:${port}`);
 });
+
 // Start the bot
-bot.launch();
+bot.launch({
+  polling: true
+});
+
