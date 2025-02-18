@@ -303,22 +303,44 @@ bot.action('myfiles', async (ctx) => {
 });
 
 // Delete a file
+// Delete a file
 bot.action('delete', async (ctx) => {
-  const fileName = ctx.message.text.trim().split(' ')[1];
+  const userId = ctx.from.id;
 
-  if (!fileName) {
-    return ctx.reply('❌ Please specify the file name to delete.');
+  if (isBanned(userId)) {
+    return ctx.reply('❌ You are banned from using this bot.');
   }
 
-  const fileRef = storageBucket.file(`uploads/${ctx.from.id}/${fileName}`);
-  try {
-    await fileRef.delete();
-    ctx.reply(`✅ File ${fileName} deleted successfully.`);
-  } catch (error) {
-    ctx.reply(`❌ Error deleting file ${fileName}`);
-    console.error(error);
-  }
+  // Ask the user to send the file name they want to delete
+  ctx.reply('Please provide the name of the file you want to delete. Make sure it matches the exact name of the file.');
+
+  // Handle the response from the user
+  bot.on('text', async (ctx) => {
+    const fileName = ctx.message.text.trim();
+
+    if (!fileName) {
+      return ctx.reply('❌ Please specify the file name to delete.');
+    }
+
+    try {
+      const fileRef = storageBucket.file(`uploads/${userId}/${fileName}`);
+      
+      // Check if the file exists before attempting to delete it
+      const [exists] = await fileRef.exists();
+      if (!exists) {
+        return ctx.reply(`❌ File ${fileName} not found.`);
+      }
+
+      // Delete the file
+      await fileRef.delete();
+      ctx.reply(`✅ File ${fileName} deleted successfully.`);
+    } catch (error) {
+      ctx.reply(`❌ Error deleting file ${fileName}.`);
+      console.error(error);
+    }
+  });
 });
+
 
 app.listen(port, () => {
   console.log(`✅ Web server running on http://localhost:${port}`);
