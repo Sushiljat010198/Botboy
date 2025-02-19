@@ -55,12 +55,25 @@ const userMenu = Markup.inlineKeyboard([
 // Start command
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
+  const userName = ctx.from.first_name || "Unknown";
 
   if (isBanned(userId)) {
     return ctx.reply('❌ You are banned from using this bot.');
   }
 
   users.add(userId); // Track user who interacts with the bot
+
+  // Firestore me user add karne ka code
+  const userRef = db.collection('users').doc(String(userId));
+  const userDoc = await userRef.get();
+
+  if (!userDoc.exists) {
+    await userRef.set({
+      chatId: userId,
+      name: userName,
+      joinedAt: new Date().toISOString(),
+    });
+  }
 
   if (isAdmin(userId)) {
     ctx.reply('Welcome to the Admin Panel! Use the menu below:', adminMenu);
@@ -124,65 +137,62 @@ bot.action('total_users', async (ctx) => {
   }
 
   const usersSnapshot = await db.collection('users').get();
-  const totalUsers = usersSnapshot.size;
+  if (usersSnapshot.empty) {
+    return ctx.reply('⚠️ No registered users found.');
+  }
 
-  ctx.reply(`📊 Total registered users: ${totalUsers}`);
+  let userList = `📊 **Total Users:** ${usersSnapshot.size}\n\n`;
+  usersSnapshot.forEach((doc) => {
+    const user = doc.data();
+    userList += `👤 **Name:** ${user.name || 'Unknown'}\n💬 **Chat ID:** ${user.chatId}\n\n`;
+  });
+
+  ctx.reply(userList, { parse_mode: 'Markdown' });
 });
 
-// Admin Panel: Broadcast Message
 bot.action('broadcast', async (ctx) => {
   const userId = ctx.from.id;
 
-  // Check if the user is an admin
   if (!isAdmin(userId)) {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
-  // Ask the admin to send the broadcast message
-  ctx.reply('Please send the message you would like to broadcast to all users. You can send text, links, images, or videos.');
+  ctx.reply('📢 Please send the message you want to broadcast (Text, Image, or Video).');
 
-  // Handle broadcasting only for admin, by limiting bot.on('message') to admin context
   bot.on('message', async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-      return; // Ignore messages from non-admin users
-    }
+    if (!isAdmin(ctx.from.id)) return;
 
     const message = ctx.message;
-
-    // Get the type of message (text, photo, video, document)
-    const messageType = message.text ? 'text' :
-                        message.photo ? 'photo' :
-                        message.video ? 'video' :
-                        message.document ? 'document' : null;
-
-    if (!messageType) {
-      return ctx.reply('⚠️ Unsupported message type. Please send text, links, images, or videos.');
+    const usersSnapshot = await db.collection('users').get();
+    if (usersSnapshot.empty) {
+      return ctx.reply('⚠️ No users found.');
     }
 
-    // Get all registered users from the database (assuming user data is stored in Firestore)
-    const usersSnapshot = await db.collection('users').get();
-    const userPromises = [];
-
-    // Send the broadcast to all users based on message type
-    usersSnapshot.forEach(doc => {
+    let sentCount = 0;
+    for (const doc of usersSnapshot.docs) {
       const user = doc.data();
-      if (messageType === 'text') {
-        userPromises.push(bot.telegram.sendMessage(user.chatId, message.text));
-      } else if (messageType === 'photo') {
-        userPromises.push(bot.telegram.sendPhoto(user.chatId, message.photo[0].file_id));
-      } else if (messageType === 'video') {
-        userPromises.push(bot.telegram.sendVideo(user.chatId, message.video.file_id));
-      } else if (messageType === 'document') {
-        userPromises.push(bot.telegram.sendDocument(user.chatId, message.document.file_id));
-      }
-    });
+      const chatId = user.chatId;
 
-    // Wait for all messages to be sent
-    await Promise.all(userPromises);
-    ctx.reply('✅ Broadcast message sent to all users!');
+      try {
+        if (message.text) {
+          await bot.telegram.sendMessage(chatId, message.text);
+        } else if (message.photo) {
+          const photoId = message.photo[message.photo.length - 1].file_id;
+          await bot.telegram.sendPhoto(chatId, photoId, { caption: message.caption || '' });
+        } else if (message.video) {
+          const videoId = message.video.file_id;
+          await bot.telegram.sendVideo(chatId, videoId, { caption: message.caption || '' });
+        }
+
+        sentCount++;
+      } catch (error) {
+        console.error(`Failed to send message to ${chatId}:`, error);
+      }
+    }
+
+    ctx.reply(`✅ Broadcast sent to ${sentCount} users.`);
   });
 });
-
 // Admin Panel: Ban a User
 bot.action('ban_user', async (ctx) => {
   const userId = ctx.from.id;
@@ -360,4 +370,3 @@ app.listen(port, () => {
 bot.launch({
   polling: true
 });
-
