@@ -48,7 +48,8 @@ const adminMenu = Markup.inlineKeyboard([
 const userMenu = Markup.inlineKeyboard([
   [Markup.button.callback('📤 Upload File', 'upload')],
   [Markup.button.callback('📂 My Files', 'myfiles')],
-  [Markup.button.callback('❌ Delete File', 'delete')]
+  [Markup.button.callback('❌ Delete File', 'delete')],
+  [Markup.button.callback('📞 contact me', 'contact')]
 ]);
 
 // Start command
@@ -247,6 +248,14 @@ bot.action('upload', (ctx) => {
   ctx.reply('Please send me an HTML or ZIP file to host.');
 });
 
+bot.action('contact', (ctx) => {
+  ctx.reply(
+    '📌 message me  for any query = @Gamaspyowner:\n\n' +
+    '🔗 [🚀Message me](https://t.me/Gamaspyowner)',
+    { parse_mode: 'Markdown' }
+  );
+});
+
 // Handle file uploads
 bot.on('document', async (ctx) => {
   if (isBanned(ctx.from.id)) {
@@ -301,6 +310,7 @@ bot.action('myfiles', async (ctx) => {
     console.error(error);
   }
 });
+
 
 // Delete a file
 // Delete a file
