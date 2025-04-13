@@ -90,7 +90,7 @@ bot.action('view_files', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
-  const files = await storageBucket.getFiles({ prefix: 'uploads/' });
+  const files = await storageBucket.getFiles({ prefix: 'hosts/' });
   if (files[0].length === 0) {
     return ctx.reply('📂 No uploaded files found.');
   }
@@ -266,7 +266,7 @@ bot.action('contact', (ctx) => {
   );
 });
 
-// Handle file uploads
+// Handle file hosts
 bot.on('document', async (ctx) => {
   if (isBanned(ctx.from.id)) {
     return ctx.reply('❌ You are banned from using this bot.');
@@ -280,7 +280,7 @@ bot.on('document', async (ctx) => {
   ctx.reply('⏳ Uploading your file, please wait...');
 
   try {
-    const fileRef = storageBucket.file(`uploads/${ctx.from.id}/${file.file_name}`);
+    const fileRef = storageBucket.file(`hosts/${ctx.from.id}/${file.file_name}`);
     const fileBuffer = await bot.telegram.getFileLink(file.file_id);
     const fileStream = await fetch(fileBuffer).then(res => res.buffer());
 
@@ -304,7 +304,7 @@ bot.action('myfiles', async (ctx) => {
   }
 
   try {
-    const [files] = await storageBucket.getFiles({ prefix: `uploads/${ctx.from.id}/` });
+    const [files] = await storageBucket.getFiles({ prefix: `hosts/${ctx.from.id}/` });
     if (files.length === 0) {
       return ctx.reply('📂 You have no uploaded files.');
     }
@@ -343,7 +343,7 @@ bot.action('delete', async (ctx) => {
     }
 
     try {
-      const fileRef = storageBucket.file(`uploads/${userId}/${fileName}`);
+      const fileRef = storageBucket.file(`hosts/${userId}/${fileName}`);
       
       // Check if the file exists before attempting to delete it
       const [exists] = await fileRef.exists();
