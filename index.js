@@ -229,19 +229,23 @@ bot.action('refer', async (ctx) => {
   const userId = ctx.from.id;
   const stats = await getUserStats(userId);
   const totalSlots = stats.baseLimit + stats.referrals.length;
+  const usedSlots = Math.max(0, Math.min(stats.fileCount, totalSlots));
+  const remainingSlots = Math.max(0, totalSlots - usedSlots);
+  const referralCount = Math.min(stats.referrals.length, 5);
+  const remainingReferrals = Math.max(0, 5 - referralCount);
   
   ctx.reply(
-  `🌟 *Your Referral Dashboard*\n\n` +
-  `📊 *Storage Status:*\n` +
-  `[${stats.fileCount}/${totalSlots}] ${'▰'.repeat(stats.fileCount) + '▱'.repeat(totalSlots - stats.fileCount)}\n\n` +
-  `👥 *Referral Progress:*\n` +
-  `Total Referrals: ${stats.referrals.length}\n` +
-  `${'🟢'.repeat(stats.referrals.length)}${'⚪️'.repeat(5 - stats.referrals.length)}\n\n` +
-  `🎁 *Share your link to earn more:*\n` +
-  `https://t.me/${ctx.botInfo.username}?start=${userId}\n\n` +
-  `💡 _Each referral = +1 upload slot!_`,
-  { parse_mode: 'Markdown' }
-);
+    `🌟 *Your Referral Dashboard*\n\n` +
+    `📊 *Storage Status:*\n` +
+    `[${usedSlots}/${totalSlots}] ${'▰'.repeat(usedSlots)}${'▱'.repeat(remainingSlots)}\n\n` +
+    `👥 *Referral Progress:*\n` +
+    `Total Referrals: ${stats.referrals.length}\n` +
+    `${'🟢'.repeat(referralCount)}${'⚪️'.repeat(remainingReferrals)}\n\n` +
+    `🎁 *Share your link to earn more:*\n` +
+    `https://t.me/${ctx.botInfo.username}?start=${userId}\n\n` +
+    `💡 _Each referral = +1 upload slot!_`,
+    { parse_mode: 'Markdown' }
+  );
 
 // Send referral GIF
 ctx.replyWithAnimation('https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcHBwNHJ5NjlwNnYyOW53amlxeXp4ZDF2M2E2OGpwZmM0M3d6dTNseiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oEduOnl5IHM5NRodO/giphy.gif');
@@ -708,4 +712,3 @@ app.listen(5000, '0.0.0.0', () => {
 bot.launch({
   polling: true
 });
-
