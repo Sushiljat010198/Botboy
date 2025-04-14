@@ -626,4 +626,86 @@ ctx.replyWithAnimation('https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcDN1Z2E
 });
 
 // View My Files
-bot.a
+bot.action('myfiles', async (ctx) => {
+  if (isBanned(ctx.from.id)) {
+    return ctx.reply('❌ You are banned from using this bot.');
+  }
+
+  try {
+    const [files] = await storageBucket.getFiles({ prefix: `uploads/${ctx.from.id}/` });
+    if (files.length === 0) {
+      return ctx.reply('📂 You have no uploaded files.');
+    }
+
+    let message = '📄 Your uploaded files:\n';
+    for (const file of files) {
+      message += `🔗 [${file.name}](https://firebasestorage.googleapis.com/v0/b/${storageBucket.name}/o/${encodeURIComponent(file.name)}?alt=media)\n`;
+    }
+
+    ctx.reply(message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    ctx.reply('❌ Error fetching your files.');
+    console.error(error);
+  }
+});
+
+
+// Delete a file
+// Delete a file
+bot.action('delete', async (ctx) => {
+  const userId = ctx.from.id;
+
+  if (isBanned(userId)) {
+    return ctx.reply('❌ You are banned from using this bot.');
+  }
+
+  try {
+    const [files] = await storageBucket.getFiles({ prefix: `uploads/${userId}/` });
+    if (files.length === 0) {
+      return ctx.reply('📂 You have no files to delete.');
+    }
+
+    const fileButtons = files.map(file => {
+      const fileName = file.name.split('/').pop();
+      return [Markup.button.callback(`🗑️ ${fileName}`, `del_${fileName}`)];
+    });
+
+    ctx.reply('Select a file to delete:', Markup.inlineKeyboard(fileButtons));
+  } catch (error) {
+    ctx.reply('❌ Error fetching your files.');
+    console.error(error);
+  }
+});
+
+// Handle file deletion button clicks
+bot.action(/^del_(.+)$/, async (ctx) => {
+  const userId = ctx.from.id;
+  const fileName = ctx.match[1];
+
+  try {
+    const fileRef = storageBucket.file(`uploads/${userId}/${fileName}`);
+    const [exists] = await fileRef.exists();
+    
+    if (!exists) {
+      return ctx.reply(`❌ File ${fileName} not found.`);
+    }
+
+    await fileRef.delete();
+    await updateFileCount(ctx.from.id, false);
+    await ctx.reply(`✅ File ${fileName} deleted successfully.`);
+  } catch (error) {
+    ctx.reply(`❌ Error deleting file ${fileName}.`);
+    console.error(error);
+  }
+});
+
+
+app.listen(5000, '0.0.0.0', () => {
+  console.log('✅ Web server running on port 5000');
+});
+
+// Start the bot
+bot.launch({
+  polling: true
+});
+
