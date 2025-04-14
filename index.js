@@ -158,12 +158,71 @@ bot.action('referral_stats', async (ctx) => {
 
 // User Panel Menu (only upload file option)
 const userMenu = Markup.inlineKeyboard([
-  [Markup.button.callback('📤 Upload File', 'upload')],
-  [Markup.button.callback('📂 My Files', 'myfiles')],
-  [Markup.button.callback('❌ Delete File', 'delete')],
-  [Markup.button.callback('🔗 My Refer Link', 'refer')],
-  [Markup.button.callback('📞 contact me', 'contact')]
+  [
+    Markup.button.callback('📤 Upload File', 'upload'),
+    Markup.button.callback('📂 My Files', 'myfiles')
+  ],
+  [
+    Markup.button.callback('❌ Delete File', 'delete'),
+    Markup.button.callback('⭐ My Stats', 'mystats')
+  ],
+  [
+    Markup.button.callback('🎁 Refer & Earn', 'refer'),
+    Markup.button.callback('🎯 Daily Tasks', 'tasks')
+  ],
+  [
+    Markup.button.callback('❓ Help Guide', 'guide'),
+    Markup.button.callback('📞 Contact Admin', 'contact')
+  ]
 ]);
+
+// Handle new menu actions
+bot.action('mystats', async (ctx) => {
+  const stats = await getUserStats(ctx.from.id);
+  const totalSlots = stats.baseLimit + stats.referrals.length;
+  
+  ctx.reply(
+    `📊 *Your Account Statistics*\n\n` +
+    `📁 Files Uploaded: ${stats.fileCount}\n` +
+    `💾 Total Storage Slots: ${totalSlots}\n` +
+    `👥 Referrals Made: ${stats.referrals.length}\n` +
+    `🌟 Account Level: ${Math.floor(stats.referrals.length/2) + 1}\n\n` +
+    `Progress to next level:\n` +
+    `[${'▰'.repeat(stats.referrals.length % 2)}${'▱'.repeat(2 - (stats.referrals.length % 2))}]`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+bot.action('tasks', async (ctx) => {
+  const stats = await getUserStats(ctx.from.id);
+  ctx.reply(
+    `🎯 *Daily Tasks*\n\n` +
+    `1. 📤 Upload a file (${stats.fileCount > 0 ? '✅' : '❌'})\n` +
+    `2. 🔗 Share your referral link (${stats.referrals.length > 0 ? '✅' : '❌'})\n` +
+    `3. 👥 Invite a friend (${stats.referrals.length > 0 ? '✅' : '❌'})\n\n` +
+    `Complete tasks to earn more storage slots!`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+bot.action('guide', (ctx) => {
+  ctx.reply(
+    `📚 *Bot Usage Guide*\n\n` +
+    `1. 📤 *Upload Files*\n` +
+    `   - Send HTML/ZIP files\n` +
+    `   - Get instant hosting links\n\n` +
+    `2. 🎁 *Earn More Storage*\n` +
+    `   - Share your referral link\n` +
+    `   - Each referral = +1 slot\n\n` +
+    `3. 📂 *Manage Files*\n` +
+    `   - View all your uploads\n` +
+    `   - Delete unwanted files\n\n` +
+    `4. 📊 *Track Progress*\n` +
+    `   - Check your stats\n` +
+    `   - Complete daily tasks`,
+    { parse_mode: 'Markdown' }
+  );
+});
 
 // Handle refer button click
 bot.action('refer', async (ctx) => {
@@ -172,12 +231,20 @@ bot.action('refer', async (ctx) => {
   const totalSlots = stats.baseLimit + stats.referrals.length;
   
   ctx.reply(
-    `🔗 Your Referral Stats:\n\n` +
-    `📊 Total Files: ${stats.fileCount}/${totalSlots}\n` +
-    `👥 Total Referrals: ${stats.referrals.length}\n\n` +
-    `Share your referral link to get more upload slots:\n` +
-    `https://t.me/${ctx.botInfo.username}?start=${userId}`
-  );
+  `🌟 *Your Referral Dashboard*\n\n` +
+  `📊 *Storage Status:*\n` +
+  `[${stats.fileCount}/${totalSlots}] ${'▰'.repeat(stats.fileCount) + '▱'.repeat(totalSlots - stats.fileCount)}\n\n` +
+  `👥 *Referral Progress:*\n` +
+  `Total Referrals: ${stats.referrals.length}\n` +
+  `${'🟢'.repeat(stats.referrals.length)}${'⚪️'.repeat(5 - stats.referrals.length)}\n\n` +
+  `🎁 *Share your link to earn more:*\n` +
+  `https://t.me/${ctx.botInfo.username}?start=${userId}\n\n` +
+  `💡 _Each referral = +1 upload slot!_`,
+  { parse_mode: 'Markdown' }
+);
+
+// Send referral GIF
+ctx.replyWithAnimation('https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcHBwNHJ5NjlwNnYyOW53amlxeXp4ZDF2M2E2OGpwZmM0M3d6dTNseiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oEduOnl5IHM5NRodO/giphy.gif');
 });
 
 // Function to track daily usage
@@ -277,7 +344,19 @@ bot.start(async (ctx) => {
   if (isAdmin(userId)) {
     ctx.reply('Welcome to the Admin Panel! Use the menu below:', adminMenu);
   } else {
-    ctx.reply('Welcome to the HTML Hosting Bot! Use the menu below:', userMenu);
+    ctx.reply(
+  '🚀 *Welcome to the HTML Hosting Bot!*\n\n' +
+  '🌟 *Features:*\n' +
+  '• Upload HTML/ZIP files\n' +
+  '• Get instant file links\n' +
+  '• Manage your uploads\n' +
+  '• Earn more slots through referrals\n\n' +
+  '🎯 Select an option below:', 
+  { 
+    parse_mode: 'Markdown',
+    ...userMenu
+  }
+);
   }
 });
 
@@ -496,7 +575,13 @@ bot.on('document', async (ctx) => {
     return ctx.reply('⚠️ Please upload an HTML or ZIP file.');
   }
   
-  ctx.reply('⏳ Uploading your file, please wait...');
+  const progressMsg = await ctx.reply(
+    '📤 *Processing Your File*\n\n' +
+    '⬆️ Progress Bar:\n' +
+    '▰▰▰▰▰▰▰▰▰▰ 100%\n\n' +
+    '✨ _Almost done..._',
+    { parse_mode: 'Markdown' }
+  );
 
   try {
     const fileRef = storageBucket.file(`uploads/${ctx.from.id}/${file.file_name}`);
@@ -521,7 +606,19 @@ bot.on('document', async (ctx) => {
     await updateFileCount(ctx.from.id, true);
     const stats = await getUserStats(ctx.from.id);
     const totalSlots = stats.baseLimit + stats.referrals.length;
-    ctx.reply(`✅ File uploaded successfully!\n\n🔗 Link: ${fileLink}\n\n📊 Your storage: ${stats.fileCount}/${totalSlots} files used\n\n🔗 Share your referral link to get more slots:\nt.me/${ctx.botInfo.username}?start=${ctx.from.id}\n\n⚠️ For best results, please open this link in Chrome browser.`);
+    ctx.reply(
+  `🎉 *Success! File Uploaded!*\n\n` +
+  `📂 File Link:\n${fileLink}\n\n` +
+  `📊 Storage Usage:\n[${stats.fileCount}/${totalSlots}] ${'▰'.repeat(stats.fileCount) + '▱'.repeat(totalSlots - stats.fileCount)}\n\n` +
+  `🎁 *Want More Storage?*\n` +
+  `Share your referral link:\n` +
+  `t.me/${ctx.botInfo.username}?start=${ctx.from.id}\n\n` +
+  `💡 _For best results, open in Chrome browser_`,
+  { parse_mode: 'Markdown' }
+);
+
+// Send a celebratory GIF
+ctx.replyWithAnimation('https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcDN1Z2E3OGhpbXE3M3Q2NmFwbzF6Y2ptdWxqdWx0NXh0aHR4anV3eiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT0xezQGU5xCDJuCPe/giphy.gif');
   } catch (error) {
     ctx.reply('❌ Error uploading your file. Try again later.');
     console.error(error);
@@ -529,75 +626,4 @@ bot.on('document', async (ctx) => {
 });
 
 // View My Files
-bot.action('myfiles', async (ctx) => {
-  if (isBanned(ctx.from.id)) {
-    return ctx.reply('❌ You are banned from using this bot.');
-  }
-
-  try {
-    const [files] = await storageBucket.getFiles({ prefix: `uploads/${ctx.from.id}/` });
-    if (files.length === 0) {
-      return ctx.reply('📂 You have no uploaded files.');
-    }
-
-    let message = '📄 Your uploaded files:\n';
-    for (const file of files) {
-      message += `🔗 [${file.name}](https://firebasestorage.googleapis.com/v0/b/${storageBucket.name}/o/${encodeURIComponent(file.name)}?alt=media)\n`;
-    }
-
-    ctx.reply(message, { parse_mode: 'Markdown' });
-  } catch (error) {
-    ctx.reply('❌ Error fetching your files.');
-    console.error(error);
-  }
-});
-
-
-// Delete a file
-// Delete a file
-bot.action('delete', async (ctx) => {
-  const userId = ctx.from.id;
-
-  if (isBanned(userId)) {
-    return ctx.reply('❌ You are banned from using this bot.');
-  }
-
-  // Ask the user to send the file name they want to delete
-  ctx.reply('Please provide the name of the file you want to delete. Make sure it matches the exact name of the file.');
-
-  // Handle the response from the user
-  bot.on('text', async (ctx) => {
-    const fileName = ctx.message.text.trim();
-
-    if (!fileName) {
-      return ctx.reply('❌ Please specify the file name to delete.');
-    }
-
-    try {
-      const fileRef = storageBucket.file(`uploads/${userId}/${fileName}`);
-      
-      // Check if the file exists before attempting to delete it
-      const [exists] = await fileRef.exists();
-      if (!exists) {
-        return ctx.reply(`❌ File ${fileName} not found.`);
-      }
-
-      // Delete the file
-      await fileRef.delete();
-      ctx.reply(`✅ File ${fileName} deleted successfully.`);
-    } catch (error) {
-      ctx.reply(`❌ Error deleting file ${fileName}.`);
-      console.error(error);
-    }
-  });
-});
-
-
-app.listen(port, () => {
-  console.log(`✅ Web server running on http://localhost:${port}`);
-});
-
-// Start the bot
-bot.launch({
-  polling: true
-});
+bot.a
