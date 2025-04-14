@@ -60,14 +60,26 @@ const isBanned = (userId) => {
 
 // Admin Panel Menu (includes view files, total users, and broadcast)
 const adminMenu = Markup.inlineKeyboard([
-  [Markup.button.callback('📂 View All Files', 'view_files')],
-  [Markup.button.callback('📊 Total Users', 'total_users')],
-  [Markup.button.callback('📈 Referral Stats', 'referral_stats')],
-  [Markup.button.callback('📊 Daily Stats', 'daily_stats')],
-  [Markup.button.callback('📢 Broadcast Message', 'broadcast')],
-  [Markup.button.callback('🎁 Add Slots', 'add_slots')],
-  [Markup.button.callback('🚫 Ban User', 'ban_user')],
-  [Markup.button.callback('🔓 Unban User', 'unban_user')],
+  [
+    Markup.button.callback('📂 View All Files', 'view_files'),
+    Markup.button.callback('📊 Total Users', 'total_users')
+  ],
+  [
+    Markup.button.callback('📈 Referral Stats', 'referral_stats'),
+    Markup.button.callback('📊 Daily Stats', 'daily_stats')
+  ],
+  [
+    Markup.button.callback('📢 Broadcast', 'broadcast'),
+    Markup.button.callback('🎁 Add Slots', 'add_slots')
+  ],
+  [
+    Markup.button.callback('⚙️ Default Slots', 'edit_default_slots'),
+    Markup.button.callback('🎯 Referral Reward', 'edit_referral_reward')
+  ],
+  [
+    Markup.button.callback('🚫 Ban User', 'ban_user'),
+    Markup.button.callback('🔓 Unban User', 'unban_user')
+  ],
 ]);
 
 // Admin Panel: Add Slots to User
@@ -243,7 +255,10 @@ bot.action('refer', async (ctx) => {
     `${'🟢'.repeat(referralCount)}${'⚪️'.repeat(remainingReferrals)}\n\n` +
     `🎁 *Share your link to earn more:*\n` +
     `https://t.me/${ctx.botInfo.username}?start=${userId}\n\n` +
-    `💡 _Each referral = +1 upload slot!_`,
+    `💫 *Rewards:*\n` +
+    `• Each referral = ${stats.referralReward || 1} upload slots!\n` +
+    `• Maximum referrals = Unlimited\n` +
+    `• Your current reward: ${stats.referrals.length * (stats.referralReward || 1)} slots`,
     { parse_mode: 'Markdown' }
   );
 
@@ -522,6 +537,65 @@ bot.action('unban_user', async (ctx) => {
   });
 });
 
+// Admin Panel: Edit Default Slots
+bot.action('edit_default_slots', async (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ You are not authorized to perform this action.');
+  }
+
+  ctx.reply('Please enter the new default slot limit for new users:');
+  
+  bot.on('text', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    
+    const newLimit = parseInt(ctx.message.text);
+    if (isNaN(newLimit) || newLimit < 1) {
+      return ctx.reply('❌ Please enter a valid number greater than 0.');
+    }
+
+    // Update all users' base limit
+    const usersSnapshot = await db.collection('users').get();
+    for (const doc of usersSnapshot.docs) {
+      const userData = doc.data();
+      const stats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
+      stats.baseLimit = newLimit;
+      await doc.ref.update({ stats });
+    }
+
+    ctx.reply(`✅ Default slot limit updated to ${newLimit} for all users.`);
+  });
+});
+
+// Admin Panel: Edit Referral Reward
+bot.action('edit_referral_reward', async (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ You are not authorized to perform this action.');
+  }
+
+  ctx.reply('Please enter the new number of slots to reward per referral:');
+  
+  bot.on('text', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    
+    const rewardSlots = parseInt(ctx.message.text);
+    if (isNaN(rewardSlots) || rewardSlots < 1) {
+      return ctx.reply('❌ Please enter a valid number greater than 0.');
+    }
+
+    // Update all users with referrals
+    const usersSnapshot = await db.collection('users').get();
+    for (const doc of usersSnapshot.docs) {
+      const userData = doc.data();
+      const stats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
+      const totalReferralSlots = stats.referrals.length * rewardSlots;
+      stats.referralReward = rewardSlots;
+      await doc.ref.update({ stats });
+    }
+
+    ctx.reply(`✅ Referral reward updated to ${rewardSlots} slots per referral.`);
+  });
+});
+
 // Admin Panel: Help Command (List Admin Commands)
 bot.command('help', (ctx) => {
   const userId = ctx.from.id;
@@ -559,6 +633,7 @@ bot.action('contact', (ctx) => {
   );
 });
 
+// Handle file uploads
 // Handle file uploads
 bot.on('document', async (ctx) => {
   const userId = ctx.from.id;
