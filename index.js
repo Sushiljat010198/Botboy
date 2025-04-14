@@ -18,6 +18,29 @@ const storageBucket = firebaseAdmin.storage().bucket();
 const db = firebaseAdmin.firestore(); // Firebase Firestore reference
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
+// Function to get user's file count and referral stats
+async function getUserStats(userId) {
+  const userRef = db.collection('users').doc(String(userId));
+  const doc = await userRef.get();
+  if (!doc.exists) return { fileCount: 0, referrals: [], baseLimit: 2 };
+  return doc.data().stats || { fileCount: 0, referrals: [], baseLimit: 2 };
+}
+
+// Function to check if user can upload more files
+async function canUploadFile(userId) {
+  const stats = await getUserStats(userId);
+  const totalAllowedFiles = stats.baseLimit + stats.referrals.length;
+  return stats.fileCount < totalAllowedFiles;
+}
+
+// Function to update file count
+async function updateFileCount(userId, increment = true) {
+  const userRef = db.collection('users').doc(String(userId));
+  const stats = await getUserStats(userId);
+  stats.fileCount = increment ? stats.fileCount + 1 : stats.fileCount - 1;
+  await userRef.update({ stats });
+}
+
 // Admin ID for validation
 const adminId = process.env.ADMIN_ID;
 
@@ -39,40 +62,216 @@ const isBanned = (userId) => {
 const adminMenu = Markup.inlineKeyboard([
   [Markup.button.callback('📂 View All Files', 'view_files')],
   [Markup.button.callback('📊 Total Users', 'total_users')],
+  [Markup.button.callback('📈 Referral Stats', 'referral_stats')],
+  [Markup.button.callback('📊 Daily Stats', 'daily_stats')],
   [Markup.button.callback('📢 Broadcast Message', 'broadcast')],
+  [Markup.button.callback('🎁 Add Slots', 'add_slots')],
   [Markup.button.callback('🚫 Ban User', 'ban_user')],
   [Markup.button.callback('🔓 Unban User', 'unban_user')],
 ]);
+
+// Admin Panel: Add Slots to User
+bot.action('add_slots', async (ctx) => {
+  const userId = ctx.from.id;
+
+  if (!isAdmin(userId)) {
+    return ctx.reply('❌ You are not authorized to perform this action.');
+  }
+
+  ctx.reply('Please send the message in format:\nUserID NumberOfSlots\n\nExample: 123456789 5');
+
+  bot.on('text', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+
+    const [targetUserId, slotsToAdd] = ctx.message.text.trim().split(' ');
+    const slots = parseInt(slotsToAdd);
+
+    if (!targetUserId || isNaN(slots)) {
+      return ctx.reply('❌ Invalid format. Please use: UserID NumberOfSlots');
+    }
+
+    try {
+      const userRef = db.collection('users').doc(String(targetUserId));
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        return ctx.reply('❌ User not found.');
+      }
+
+      const userData = userDoc.data();
+      const currentStats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
+      currentStats.baseLimit += slots;
+
+      await userRef.update({ stats: currentStats });
+      ctx.reply(`✅ Successfully added ${slots} slots to user ${targetUserId}.\nNew total slots: ${currentStats.baseLimit + currentStats.referrals.length}`);
+    } catch (error) {
+      console.error('Error adding slots:', error);
+      ctx.reply('❌ Error adding slots. Please try again.');
+    }
+  });
+});
+
+// Admin Panel: View Referral Stats
+bot.action('referral_stats', async (ctx) => {
+  const userId = ctx.from.id;
+
+  if (!isAdmin(userId)) {
+    return ctx.reply('❌ You are not authorized to perform this action.');
+  }
+
+  const usersSnapshot = await db.collection('users').get();
+  if (usersSnapshot.empty) {
+    return ctx.reply('⚠️ No users found.');
+  }
+
+  let totalReferrals = 0;
+  let topReferrers = [];
+
+  usersSnapshot.forEach(doc => {
+    const user = doc.data();
+    const stats = user.stats || { referrals: [] };
+    const referralCount = stats.referrals.length;
+    totalReferrals += referralCount;
+
+    if (referralCount > 0) {
+      topReferrers.push({
+        name: user.name || 'Unknown',
+        chatId: user.chatId,
+        referrals: referralCount
+      });
+    }
+  });
+
+  // Sort top referrers by referral count
+  topReferrers.sort((a, b) => b.referrals - a.referrals);
+
+  let message = `📊 Referral System Statistics\n\n`;
+  message += `Total Referrals: ${totalReferrals}\n\n`;
+  message += `Top Referrers:\n`;
+
+  topReferrers.slice(0, 10).forEach((user, index) => {
+    message += `${index + 1}. ${user.name} (ID: ${user.chatId}) - ${user.referrals} referrals\n`;
+  });
+
+  ctx.reply(message);
+});
 
 // User Panel Menu (only upload file option)
 const userMenu = Markup.inlineKeyboard([
   [Markup.button.callback('📤 Upload File', 'upload')],
   [Markup.button.callback('📂 My Files', 'myfiles')],
   [Markup.button.callback('❌ Delete File', 'delete')],
+  [Markup.button.callback('🔗 My Refer Link', 'refer')],
   [Markup.button.callback('📞 contact me', 'contact')]
 ]);
 
+// Handle refer button click
+bot.action('refer', async (ctx) => {
+  const userId = ctx.from.id;
+  const stats = await getUserStats(userId);
+  const totalSlots = stats.baseLimit + stats.referrals.length;
+  
+  ctx.reply(
+    `🔗 Your Referral Stats:\n\n` +
+    `📊 Total Files: ${stats.fileCount}/${totalSlots}\n` +
+    `👥 Total Referrals: ${stats.referrals.length}\n\n` +
+    `Share your referral link to get more upload slots:\n` +
+    `https://t.me/${ctx.botInfo.username}?start=${userId}`
+  );
+});
+
+// Function to track daily usage
+async function trackDailyUsage(userId) {
+  const today = new Date().toISOString().split('T')[0];
+  const statsRef = db.collection('dailyStats').doc(today);
+  
+  try {
+    await db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(statsRef);
+      if (!doc.exists) {
+        transaction.set(statsRef, { users: [userId], count: 1 });
+      } else {
+        const data = doc.data();
+        if (!data.users.includes(userId)) {
+          transaction.update(statsRef, {
+            users: [...data.users, userId],
+            count: data.count + 1
+          });
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error tracking daily usage:', error);
+  }
+}
+
+// Handler for daily stats button
+bot.action('daily_stats', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) {
+    return ctx.reply('❌ You are not authorized to view this information.');
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const statsRef = db.collection('dailyStats').doc(today);
+  const doc = await statsRef.get();
+
+  if (!doc.exists) {
+    return ctx.reply('📊 No users today yet.');
+  }
+
+  const data = doc.data();
+  ctx.reply(`📊 Daily Statistics\n\nToday (${today}):\n👥 Total Users: ${data.count}`);
+});
+
 // Start command
 bot.start(async (ctx) => {
+  await trackDailyUsage(ctx.from.id);
   const userId = ctx.from.id;
   const userName = ctx.from.first_name || "Unknown";
+  const startPayload = ctx.startPayload; // Get referral code if any
 
   if (isBanned(userId)) {
     return ctx.reply('❌ You are banned from using this bot.');
   }
 
-  users.add(userId); // Track user who interacts with the bot
+  users.add(userId);
 
-  // Firestore me user add karne ka code
   const userRef = db.collection('users').doc(String(userId));
   const userDoc = await userRef.get();
 
   if (!userDoc.exists) {
-    await userRef.set({
+    const initialData = {
       chatId: userId,
       name: userName,
       joinedAt: new Date().toISOString(),
-    });
+      stats: { fileCount: 0, referrals: [], baseLimit: 2 }
+    };
+
+    // Handle referral
+    if (startPayload && startPayload !== String(userId)) {
+      const referrerRef = db.collection('users').doc(startPayload);
+      const referrerDoc = await referrerRef.get();
+      
+      if (referrerDoc.exists) {
+        const referrerStats = await getUserStats(startPayload);
+        if (!referrerStats.referrals.includes(String(userId))) {
+          referrerStats.referrals.push(String(userId));
+          await referrerRef.update({ stats: referrerStats });
+          ctx.reply('✅ You were referred! Your referrer got an extra file slot.');
+          
+          // Send notification to referrer about new slot
+          bot.telegram.sendMessage(startPayload, 
+            '🎉 Congratulations! Someone used your referral link!\n' +
+            '📤 You can now upload one more file!\n' +
+            '📊 New total slots: ' + (referrerStats.baseLimit + referrerStats.referrals.length)
+          );
+        }
+      }
+    }
+
+    await userRef.set(initialData);
   }
 
   if (isAdmin(userId)) {
@@ -141,13 +340,24 @@ bot.action('total_users', async (ctx) => {
     return ctx.reply('⚠️ No registered users found.');
   }
 
-  let userList = `📊 **Total Users:** ${usersSnapshot.size}\n\n`;
-  usersSnapshot.forEach((doc) => {
+  let userList = `📊 Total Users: ${usersSnapshot.size}\n\n`;
+  let count = 0;
+  
+  for (const doc of usersSnapshot.docs) {
     const user = doc.data();
-    userList += `👤 **Name:** ${user.name || 'Unknown'}\n💬 **Chat ID:** ${user.chatId}\n\n`;
-  });
-
-  ctx.reply(userList, { parse_mode: 'Markdown' });
+    count++;
+    userList += `${count}. 👤 ${user.name || 'Unknown'} (ID: ${user.chatId})\n`;
+    
+    // Send message in chunks to avoid telegram message length limit
+    if (count % 50 === 0) {
+      await ctx.reply(userList);
+      userList = '';
+    }
+  }
+  
+  if (userList) {
+    await ctx.reply(userList);
+  }
 });
 
 bot.action('broadcast', async (ctx) => {
@@ -268,8 +478,17 @@ bot.action('contact', (ctx) => {
 
 // Handle file uploads
 bot.on('document', async (ctx) => {
-  if (isBanned(ctx.from.id)) {
+  const userId = ctx.from.id;
+  
+  if (isBanned(userId)) {
     return ctx.reply('❌ You are banned from using this bot.');
+  }
+
+  const canUpload = await canUploadFile(userId);
+  if (!canUpload) {
+    const stats = await getUserStats(userId);
+    const totalSlots = stats.baseLimit + stats.referrals.length;
+    return ctx.reply(`❌ You've reached your file upload limit (${stats.fileCount}/${totalSlots})\n\nShare your referral link to get more slots:\nt.me/${ctx.botInfo.username}?start=${userId}`);
   }
 
   const file = ctx.message.document;
@@ -299,7 +518,10 @@ bot.on('document', async (ctx) => {
     });
 
     const fileLink = `https://firebasestorage.googleapis.com/v0/b/${storageBucket.name}/o/${encodeURIComponent(fileRef.name)}?alt=media&token=token`;
-    ctx.reply(`✅ File uploaded successfully!\n\n🔗 Link: ${fileLink}\n\n⚠️ For best results, please open this link in Chrome browser.`);
+    await updateFileCount(ctx.from.id, true);
+    const stats = await getUserStats(ctx.from.id);
+    const totalSlots = stats.baseLimit + stats.referrals.length;
+    ctx.reply(`✅ File uploaded successfully!\n\n🔗 Link: ${fileLink}\n\n📊 Your storage: ${stats.fileCount}/${totalSlots} files used\n\n🔗 Share your referral link to get more slots:\nt.me/${ctx.botInfo.username}?start=${ctx.from.id}\n\n⚠️ For best results, please open this link in Chrome browser.`);
   } catch (error) {
     ctx.reply('❌ Error uploading your file. Try again later.');
     console.error(error);
