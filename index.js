@@ -458,6 +458,10 @@ bot.action('total_users', async (ctx) => {
   }
 });
 
+// Track broadcast state
+let broadcastMode = false;
+let messageHandler = null;
+
 bot.action('broadcast', async (ctx) => {
   const userId = ctx.from.id;
 
@@ -465,14 +469,23 @@ bot.action('broadcast', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
+  broadcastMode = true;
   ctx.reply('📢 Please send the message you want to broadcast (Text, Image, or Video).');
 
-  bot.on('message', async (ctx) => {
-    if (!isAdmin(ctx.from.id)) return;
+  // Remove existing handler if any
+  if (messageHandler) {
+    bot.off('message', messageHandler);
+  }
+
+  // Create new message handler
+  messageHandler = async (ctx) => {
+    if (!isAdmin(ctx.from.id) || !broadcastMode) return;
 
     const message = ctx.message;
     const usersSnapshot = await db.collection('users').get();
     if (usersSnapshot.empty) {
+      broadcastMode = false;
+      bot.off('message', messageHandler);
       return ctx.reply('⚠️ No users found.');
     }
 
@@ -499,7 +512,14 @@ bot.action('broadcast', async (ctx) => {
     }
 
     ctx.reply(`✅ Broadcast sent to ${sentCount} users.`);
-  });
+    
+    // Clean up after broadcast
+    broadcastMode = false;
+    bot.off('message', messageHandler);
+  };
+
+  // Register the new handler
+  bot.on('message', messageHandler);
 });
 // Admin Panel: Ban a User
 bot.action('ban_user', async (ctx) => {
@@ -633,7 +653,6 @@ bot.action('contact', (ctx) => {
   );
 });
 
-// Handle file uploads
 // Handle file uploads
 bot.on('document', async (ctx) => {
   const userId = ctx.from.id;
