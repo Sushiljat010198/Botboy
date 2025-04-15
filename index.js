@@ -345,13 +345,29 @@ bot.start(async (ctx) => {
         if (!referrerStats.referrals.includes(String(userId))) {
           referrerStats.referrals.push(String(userId));
           await referrerRef.update({ stats: referrerStats });
-          ctx.reply('✅ You were referred! Your referrer got an extra file slot.');
           
-          // Send notification to referrer about new slot
+          // Send welcome message to new user
+          ctx.reply(
+            '🎉 Welcome! You were referred by another user!\n' +
+            '📤 You have received your initial storage slots.\n' +
+            '💫 Share your own referral link to earn more slots!\n\n' +
+            `🔗 Your referral link:\nt.me/${ctx.botInfo.username}?start=${userId}`
+          );
+          
+          // Send enhanced notification to referrer
+          const newUserName = ctx.from.first_name || "Someone";
           bot.telegram.sendMessage(startPayload, 
-            '🎉 Congratulations! Someone used your referral link!\n' +
-            '📤 You can now upload one more file!\n' +
-            '📊 New total slots: ' + (referrerStats.baseLimit + referrerStats.referrals.length)
+            `🌟 *New Referral Success!*\n\n` +
+            `👤 User: ${newUserName}\n` +
+            `📊 Your New Total Slots: ${referrerStats.baseLimit + referrerStats.referrals.length}\n` +
+            `💰 Reward: +1 Storage Slot\n\n` +
+            `Keep sharing your referral link to earn more slots!`,
+            { parse_mode: 'Markdown' }
+          );
+
+          // Send a celebratory GIF to referrer
+          bot.telegram.sendAnimation(startPayload, 
+            'https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcHBwNHJ5NjlwNnYyOW53amlxeXp4ZDF2M2E2OGpwZmM0M3d6dTNseiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oEduOnl5IHM5NRodO/giphy.gif'
           );
         }
       }
@@ -459,8 +475,7 @@ bot.action('total_users', async (ctx) => {
 });
 
 // Track broadcast state
-let broadcastMode = false;
-let messageHandler = null;
+const broadcastStates = new Map();
 
 bot.action('broadcast', async (ctx) => {
   const userId = ctx.from.id;
@@ -469,27 +484,24 @@ bot.action('broadcast', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
-  broadcastMode = true;
-  ctx.reply('📢 Please send the message you want to broadcast (Text, Image, or Video).');
+  broadcastStates.set(userId, true);
+  await ctx.reply('📢 Please send the message you want to broadcast (Text, Image, or Video).');
 
-  // Remove existing handler if any
-  if (messageHandler) {
-    bot.off('message', messageHandler);
-  }
+  // Create message handler for broadcast
+  bot.on('message', async (msgCtx) => {
+    if (!isAdmin(msgCtx.from.id) || !broadcastStates.get(msgCtx.from.id)) return;
+    
+    try {
+    broadcastStates.delete(msgCtx.from.id); // Reset broadcast state
 
-  // Create new message handler
-  messageHandler = async (ctx) => {
-    if (!isAdmin(ctx.from.id) || !broadcastMode) return;
-
-    const message = ctx.message;
+    const message = msgCtx.message;
     const usersSnapshot = await db.collection('users').get();
     if (usersSnapshot.empty) {
-      broadcastMode = false;
-      bot.off('message', messageHandler);
-      return ctx.reply('⚠️ No users found.');
+      return msgCtx.reply('⚠️ No users found.');
     }
 
     let sentCount = 0;
+    let failedCount = 0;
     for (const doc of usersSnapshot.docs) {
       const user = doc.data();
       const chatId = user.chatId;
@@ -497,31 +509,42 @@ bot.action('broadcast', async (ctx) => {
       try {
         if (message.text) {
           await bot.telegram.sendMessage(chatId, message.text);
+          sentCount++;
         } else if (message.photo) {
           const photoId = message.photo[message.photo.length - 1].file_id;
-          await bot.telegram.sendPhoto(chatId, photoId, { caption: message.caption || '' });
+          await bot.telegram.sendPhoto(chatId, photoId, {
+            caption: message.caption || ''
+          });
+          sentCount++;
         } else if (message.video) {
           const videoId = message.video.file_id;
-          await bot.telegram.sendVideo(chatId, videoId, { caption: message.caption || '' });
+          await bot.telegram.sendVideo(chatId, videoId, {
+            caption: message.caption || ''
+          });
+          sentCount++;
         }
-
-        sentCount++;
+        
+        // Add small delay to prevent rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.error(`Failed to send message to ${chatId}:`, error);
+        failedCount++;
       }
     }
 
-    ctx.reply(`✅ Broadcast sent to ${sentCount} users.`);
-    
-    // Clean up after broadcast
-    broadcastMode = false;
-    bot.off('message', messageHandler);
-  };
-
-  // Register the new handler
-  bot.on('message', messageHandler);
+    msgCtx.reply(`📊 Broadcast Results:\n✅ Sent to: ${sentCount} users\n❌ Failed: ${failedCount} users`);
+  } catch (error) {
+    console.error('Broadcast error:', error);
+    msgCtx.reply('❌ Error occurred during broadcast. Please try again.');
+  }
+  });
 });
 // Admin Panel: Ban a User
+let banUserMode = false;
+let unbanUserMode = false;
+let defaultSlotsMode = false;
+let referralRewardMode = false;
+
 bot.action('ban_user', async (ctx) => {
   const userId = ctx.from.id;
 
@@ -529,14 +552,12 @@ bot.action('ban_user', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
+  banUserMode = true;
+  unbanUserMode = false;
+  defaultSlotsMode = false;
+  referralRewardMode = false;
+  
   ctx.reply('Please send the user ID to ban:');
-  bot.on('text', (ctx) => {
-    const targetUserId = ctx.message.text.trim();
-    if (targetUserId) {
-      bannedUsers.add(targetUserId);
-      ctx.reply(`✅ User ${targetUserId} has been banned.`);
-    }
-  });
 });
 
 // Admin Panel: Unban a User
@@ -547,14 +568,81 @@ bot.action('unban_user', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
+  banUserMode = false;
+  unbanUserMode = true;
+  defaultSlotsMode = false;
+  referralRewardMode = false;
+
   ctx.reply('Please send the user ID to unban:');
-  bot.on('text', (ctx) => {
-    const targetUserId = ctx.message.text.trim();
-    if (targetUserId) {
-      bannedUsers.delete(targetUserId);
-      ctx.reply(`✅ User ${targetUserId} has been unbanned.`);
+});
+
+// Improved message handler for admin actions
+bot.on('text', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) return;
+
+  const text = ctx.message.text.trim();
+
+  if (banUserMode) {
+    banUserMode = false;
+    bannedUsers.add(text);
+    await ctx.reply(`✅ User ${text} has been banned.`);
+    return;
+  }
+
+  if (unbanUserMode) {
+    unbanUserMode = false;
+    bannedUsers.delete(text);
+    await ctx.reply(`✅ User ${text} has been unbanned.`);
+    return;
+  }
+
+  if (defaultSlotsMode) {
+    defaultSlotsMode = false;
+    const newLimit = parseInt(text);
+    if (isNaN(newLimit) || newLimit < 1) {
+      return ctx.reply('❌ Please enter a valid number greater than 0.');
     }
-  });
+
+    try {
+      const usersSnapshot = await db.collection('users').get();
+      for (const doc of usersSnapshot.docs) {
+        const userData = doc.data();
+        const stats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
+        stats.baseLimit = newLimit;
+        await doc.ref.update({ stats });
+      }
+      await ctx.reply(`✅ Default slot limit updated to ${newLimit} for all users.`);
+    } catch (error) {
+      console.error('Error updating slots:', error);
+      await ctx.reply('❌ Error updating slots. Please try again.');
+    }
+    return;
+  }
+
+  if (referralRewardMode) {
+    referralRewardMode = false;
+    const rewardSlots = parseInt(text);
+    if (isNaN(rewardSlots) || rewardSlots < 1) {
+      return ctx.reply('❌ Please enter a valid number greater than 0.');
+    }
+
+    try {
+      const usersSnapshot = await db.collection('users').get();
+      for (const doc of usersSnapshot.docs) {
+        const userData = doc.data();
+        const stats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
+        stats.referralReward = rewardSlots;
+        await doc.ref.update({ stats });
+      }
+      await ctx.reply(`✅ Referral reward updated to ${rewardSlots} slots per referral.`);
+    } catch (error) {
+      console.error('Error updating referral reward:', error);
+      await ctx.reply('❌ Error updating referral reward. Please try again.');
+    }
+    return;
+  }
 });
 
 // Admin Panel: Edit Default Slots
@@ -563,27 +651,12 @@ bot.action('edit_default_slots', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
+  banUserMode = false;
+  unbanUserMode = false;
+  defaultSlotsMode = true;
+  referralRewardMode = false;
+
   ctx.reply('Please enter the new default slot limit for new users:');
-  
-  bot.on('text', async (ctx) => {
-    if (!isAdmin(ctx.from.id)) return;
-    
-    const newLimit = parseInt(ctx.message.text);
-    if (isNaN(newLimit) || newLimit < 1) {
-      return ctx.reply('❌ Please enter a valid number greater than 0.');
-    }
-
-    // Update all users' base limit
-    const usersSnapshot = await db.collection('users').get();
-    for (const doc of usersSnapshot.docs) {
-      const userData = doc.data();
-      const stats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
-      stats.baseLimit = newLimit;
-      await doc.ref.update({ stats });
-    }
-
-    ctx.reply(`✅ Default slot limit updated to ${newLimit} for all users.`);
-  });
 });
 
 // Admin Panel: Edit Referral Reward
@@ -592,28 +665,41 @@ bot.action('edit_referral_reward', async (ctx) => {
     return ctx.reply('❌ You are not authorized to perform this action.');
   }
 
+  banUserMode = false;
+  unbanUserMode = false;
+  defaultSlotsMode = false;
+  referralRewardMode = true;
+
   ctx.reply('Please enter the new number of slots to reward per referral:');
-  
-  bot.on('text', async (ctx) => {
-    if (!isAdmin(ctx.from.id)) return;
-    
-    const rewardSlots = parseInt(ctx.message.text);
-    if (isNaN(rewardSlots) || rewardSlots < 1) {
-      return ctx.reply('❌ Please enter a valid number greater than 0.');
-    }
+});
 
-    // Update all users with referrals
-    const usersSnapshot = await db.collection('users').get();
-    for (const doc of usersSnapshot.docs) {
-      const userData = doc.data();
-      const stats = userData.stats || { fileCount: 0, referrals: [], baseLimit: 2 };
-      const totalReferralSlots = stats.referrals.length * rewardSlots;
-      stats.referralReward = rewardSlots;
-      await doc.ref.update({ stats });
-    }
+// Admin command to view banned users
+bot.command('viewbanned', async (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ You are not authorized to view this information.');
+  }
 
-    ctx.reply(`✅ Referral reward updated to ${rewardSlots} slots per referral.`);
+  if (bannedUsers.size === 0) {
+    return ctx.reply('📢 No users are currently banned.');
+  }
+
+  let message = '🚫 Banned Users:\n\n';
+  bannedUsers.forEach(userId => {
+    message += `• ${userId}\n`;
   });
+
+  ctx.reply(message);
+});
+
+// Admin command to clear all bans
+bot.command('clearbans', async (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ You are not authorized to perform this action.');
+  }
+
+  const count = bannedUsers.size;
+  bannedUsers.clear();
+  ctx.reply(`✅ Cleared all bans (${count} users unbanned)`);
 });
 
 // Admin Panel: Help Command (List Admin Commands)
